@@ -4,6 +4,8 @@
 
  #include "myfsck.h"
  #include "readwrite.h"
+ #include "ext2_fs.h"
+ #include "utility.h"
  #include <stdlib.h>
  #include <unistd.h>
  #include <string.h>
@@ -14,6 +16,7 @@
 
 
 int device;
+struct ext2_super_block super_block;
 
 int main(int argc, char *argv[]){
 	/*
@@ -57,6 +60,38 @@ int main(int argc, char *argv[]){
 
 	partition p = partitions[partition_num - 1];
 	printf("0x%02X %d %d\n", p.type, p.start, p.length);
+
+	
+	//read the super block information into the global variable
+	read_sectors(partitions[0].start + 2, 2, &super_block);
+	
+	printf("size of: %d\n", sizeof(struct ext2_inode));
+	struct ext2_inode* root_node = get_inode(EXT2_ROOT_INO, partitions[0].start);
+	
+	
+
+	//read the directories
+	struct ext2_dir_entry_2 directories[256];
+	read_entries(63, root_node, directories);
+
+	int i;
+	// for(i = 0; directories[i].file_type != 0; i++){
+	// 	printf("inode: %d, length %d, name: %s\n", directories[i].inode, directories[i].rec_len,
+	// 		directories[i].name);
+	// }
+
+	int count[super_block.s_inodes_count];
+	dfs_directory(63, count, directories[0]);
+
+	for(i = 0; i < 100; i++){
+		printf("inode links count %d\n", count[i]);
+	}
+
+	int bit;
+	for(i = 1; i < 11; i++){
+		bit = get_bit_map(63, i);
+		printf("bit map for node %d: %d\n", i, bit);
+    }
 
 	return 0;
 }
