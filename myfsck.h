@@ -21,5 +21,7 @@ typedef struct {
 
 extern struct ext2_super_block super_block;
 void get_partitions(partition *partitions, char *disk_name);
+int print_partitions(partition *partitions, int index);
+void repair_disk(int disk_offset);
 
 #endif

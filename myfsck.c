@@ -14,6 +14,9 @@
  #include <sys/stat.h>
  #include <fcntl.h>
 
+ #define SUPER_BLOCK_SIZE 2
+ #define SUPER_BLOCK_OFFSET 2
+ #define EXT2_TYPE 0x83
 
 int device;
 struct ext2_super_block super_block;
@@ -23,11 +26,12 @@ int main(int argc, char *argv[]){
 	 */
 
 	int partition_num = -1;
+	int repair_partition_num = -1;
 	char *disk_name = NULL;
     
 
     int opt;
-	while((opt = getopt(argc, argv, ":p:i")) != -1){
+	while((opt = getopt(argc, argv, "f:p:i")) != -1){
 		switch(opt){
 			case 'p':
 				partition_num = atoi(optarg);
@@ -35,25 +39,88 @@ int main(int argc, char *argv[]){
 			case 'i':
 				disk_name = argv[optind];
 				break;
+			case 'f':
+				repair_partition_num = atoi(optarg);
 			default:
 				break;
 		}
 	}
 
-	if(partition_num == -1 || disk_name == NULL){
+	//if the input is corrupted
+	if((repair_partition_num == -1 && partition_num == -1) || disk_name == NULL){
 		printf("Usage: ./myfsck -p <partition number> -i /path/to/disk/image");
 		return(64);
 	}
 
-
+	//exit when disk opens failed
 	if ((device = open(disk_name, O_RDWR)) == -1) {
         perror("Could not open device file");
         exit(-1);
     }
 
+
 	partition partitions[MAX_PARTITIONS];
 	get_partitions(partitions, disk_name);
 
+	
+
+	if(partition_num != -1){
+		if(print_partitions(partitions, partition_num)){
+			return -1;
+		} else{
+			return 0;
+		}
+	}
+
+	
+
+	int i;
+	if(repair_partition_num != -1){
+		if(repair_partition_num == 0){
+			for(i = 0; i < MAX_PARTITIONS && partitions[i].num != 0; i++){
+				if(partitions[i].type == EXT2_TYPE){
+					repair_disk(partitions[i].start);
+				}
+			}
+	    } else{
+	    	repair_disk(partitions[repair_partition_num - 1].start);
+	    }
+	}
+
+	return 0;
+}
+
+void repair_disk(int disk_offset){
+	read_sectors(disk_offset + SUPER_BLOCK_OFFSET, SUPER_BLOCK_SIZE, &super_block);
+		
+	int addr;
+	struct ext2_inode* root_node = get_inode(EXT2_ROOT_INO, disk_offset, &addr);	
+
+	//read the root directory
+	struct ext2_dir_entry_2 directories[256];
+	int addrs[256];
+	read_entries(disk_offset, root_node, directories, addrs);
+
+	// int i;
+	// for(i = 0; directories[i].file_type != 0; i++){
+	//  	printf("inode: %d, length %d, name: %s\n", directories[i].inode, directories[i].rec_len,
+	//  		directories[i].name);
+	// }
+
+	//an array that counts the actual i link for each i_node
+	int *count = (int*) calloc(super_block.s_inodes_count, sizeof(int));
+	//traverse all directories and files with a DFS approach
+	dfs_directory(disk_offset, count, directories[0], directories[0]);
+
+	//repair the i_links count
+	repair_ilink_count(disk_offset, count);
+}
+
+
+/*
+ * print the partition information
+ */
+int print_partitions(partition *partitions, int partition_num){
 	if(partitions[partition_num - 1].num == 0){
 		return(-1);
 	}
@@ -61,41 +128,12 @@ int main(int argc, char *argv[]){
 	partition p = partitions[partition_num - 1];
 	printf("0x%02X %d %d\n", p.type, p.start, p.length);
 
-	
-	//read the super block information into the global variable
-	read_sectors(partitions[0].start + 2, 2, &super_block);
-	
-	printf("size of: %d\n", sizeof(struct ext2_inode));
-	struct ext2_inode* root_node = get_inode(EXT2_ROOT_INO, partitions[0].start);
-	
-	
-
-	//read the directories
-	struct ext2_dir_entry_2 directories[256];
-	read_entries(63, root_node, directories);
-
-	int i;
-	// for(i = 0; directories[i].file_type != 0; i++){
-	// 	printf("inode: %d, length %d, name: %s\n", directories[i].inode, directories[i].rec_len,
-	// 		directories[i].name);
-	// }
-
-	int count[super_block.s_inodes_count];
-	dfs_directory(63, count, directories[0]);
-
-	for(i = 0; i < 100; i++){
-		printf("inode links count %d\n", count[i]);
-	}
-
-	int bit;
-	for(i = 1; i < 11; i++){
-		bit = get_bit_map(63, i);
-		printf("bit map for node %d: %d\n", i, bit);
-    }
-
 	return 0;
 }
 
+/*
+ * read all the partitions information
+ */
 void get_partitions(partition *partitions, char *disk_name){
 	unsigned char buf[sector_size_bytes];
 	read_sectors(MBR_SECTOR, 1, buf);
