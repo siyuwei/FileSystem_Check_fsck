@@ -112,8 +112,11 @@ void repair_disk(int disk_offset){
 	//traverse all directories and files with a DFS approach
 	dfs_directory(disk_offset, count, directories[0], directories[0]);
 
+	//put the unreferenced inodes into the lost+found directory
+	lost_found(disk_offset, count);
 	//repair the i_links count
 	repair_ilink_count(disk_offset, count);
+
 }
 
 

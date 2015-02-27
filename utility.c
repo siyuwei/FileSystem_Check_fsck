@@ -20,10 +20,15 @@
 #define MAX_ENTRY_DIR 4096
 #define THIS_DIR "."
 #define PARENT_DIR ".."
+#define LOST_FOUND_NAME "lost+found"
+#define MAX_FILES 256
+#define I_MODE(X) *((unsigned char *)&X + 1) >> 4
+#define DIRECTORY_MODE 0x4
 
 
 static struct ext2_group_desc *desc_table = NULL;
 static int partition_offset = -1;
+static int lost_found_index;
 
 
 /*
@@ -160,8 +165,10 @@ void dfs_directory(int offset, int *count, struct ext2_dir_entry_2 dir, struct e
     read_entries(offset, inode, dirs, addrs);
     int i;
     for(i = 0; i < MAX_ENTRY_DIR && dirs[i].inode != 0; i++){
-        //printf("name: %s inode: %d\n", dirs[i].name, dirs[i].inode - 1);
-    
+        //printf("name: %s inode: %d bitmap: %d\n", dirs[i].name, dirs[i].inode , get_bit_map(offset, dirs[i].inode));
+        if(!strcmp(dirs[i].name, LOST_FOUND_NAME)) {
+            lost_found_index = dirs[i].inode;
+        }
 
         if(!strcmp(dirs[i].name, THIS_DIR)){
             if(dirs[i].inode != dir.inode){
@@ -208,10 +215,89 @@ void repair_ilink_count(int offset, int* count){
                 struct ext2_inode *new_node = get_inode(i + 1, offset, &addr);
                 printf("new count: %d\n", new_node->i_links_count);
             }
+            free(inode);
         }
     }
 }
 
+/*
+ *
+ */
+void i_mode_2_file_type(__u8 *type, int i_mode){
+    switch(i_mode){
+        case 0xC:
+            *type = 6;
+            break;
+        case 0x8:
+            *type = 1;
+            break;
+        case 0x4:
+            *type = 2;
+            break;
+        default:
+            break;
+    }
+}
+
+
+/*
+ * Find the unreferenced inodes and put them in the lost+found directory
+ */
+void lost_found(int offset, int* count){
+    int i, j;
+    struct ext2_dir_entry_2 new_entry;
+    
+    for(i = 12; i <= super_block.s_inodes_count; i++){
+        if(get_bit_map(offset, i) && count[i - 1] == 0){
+
+            printf("unreferenced inode: %d, %d\n", i, count[i - 1]);
+            struct ext2_dir_entry_2 dirs[MAX_FILES];
+            
+            //get the unreferenced inode
+            int addr_node;
+            struct ext2_inode *inode = get_inode(i, offset, &addr_node);
+            //get the lost_found inode
+            int addr_lost_found;
+            struct ext2_inode *lost_found_node = get_inode(lost_found_index, offset, &addr_lost_found);
+            
+            //construct a new entry for the found inode
+            sprintf(new_entry.name, "%d", i);
+            i_mode_2_file_type(&new_entry.file_type, I_MODE(inode->i_mode));
+            new_entry.inode = i;
+            new_entry.name_len = strlen(new_entry.name);
+            
+            new_entry.rec_len 
+                = (DIRECTORY_SIZE + new_entry.name_len) % 4 == 0 ?
+                DIRECTORY_SIZE + new_entry.name_len :  ((DIRECTORY_SIZE + new_entry.name_len) / 4 + 1) * 4;
+
+            //read the lost_found directory entries
+            int addrs[MAX_FILES];
+            read_entries(offset, lost_found_node, dirs, addrs);
+
+            //skip the occupied entries
+            for(j = 0; dirs[j].file_type != 0; j++);
+            struct ext2_dir_entry_2 lost_found_entry;
+            memcpy(&lost_found_entry, dirs, DIRECTORY_SIZE);
+            
+            //write the entry for the unreferenced inode
+            write_disk(addrs[j], new_entry.rec_len, &new_entry);
+            //write the last entry for the directory
+            dirs[j].rec_len -= new_entry.rec_len;
+            write_disk(addrs[j] + new_entry.rec_len, dirs[j].rec_len, dirs + j);
+
+            //if the found inode refers to a directory, dfs the directory
+            if(I_MODE(inode->i_mode) == DIRECTORY_MODE){
+                read_entries(offset, inode, dirs, addrs);
+                dfs_directory(offset, count, dirs[0], lost_found_entry);
+            }
+
+            free(inode);
+            free(lost_found_node);
+
+
+        }
+    }
+}
 
 /*
  * read the bit map 
