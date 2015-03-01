@@ -1,5 +1,5 @@
-/*
- * Siyu Wei
+/* 
+ * @author: Siyu Wei
  */
 
  #include "myfsck.h"
@@ -17,19 +17,21 @@
  #define SUPER_BLOCK_SIZE 2
  #define SUPER_BLOCK_OFFSET 2
  #define EXT2_TYPE 0x83
+ #define MAX_DIRS 256
 
 int device;
 struct ext2_super_block super_block;
 
 int main(int argc, char *argv[]){
-	/*
-	 */
 
 	int partition_num = -1;
 	int repair_partition_num = -1;
 	char *disk_name = NULL;
     
 
+	/*
+	 * read in the arguments
+	 */
     int opt;
 	while((opt = getopt(argc, argv, "f:p:i")) != -1){
 		switch(opt){
@@ -46,9 +48,10 @@ int main(int argc, char *argv[]){
 		}
 	}
 
-	//if the input is corrupted
+	//if the input is not correct
 	if((repair_partition_num == -1 && partition_num == -1) || disk_name == NULL){
 		printf("Usage: ./myfsck -p <partition number> -i /path/to/disk/image");
+		printf("Usage: ./myfsck -f <partition number> -i /path/to/disk/image");
 		return(64);
 	}
 
@@ -62,8 +65,9 @@ int main(int argc, char *argv[]){
 	partition partitions[MAX_PARTITIONS];
 	get_partitions(partitions, disk_name);
 
-	
-
+	/*
+	 * print partition information
+	 */
 	if(partition_num != -1){
 		if(print_partitions(partitions, partition_num)){
 			return -1;
@@ -74,6 +78,9 @@ int main(int argc, char *argv[]){
 
 	
 
+	/*
+	 * do a fsck to check and repair the disk image
+	 */
 	int i;
 	if(repair_partition_num != -1){
 		if(repair_partition_num == 0){
@@ -83,6 +90,8 @@ int main(int argc, char *argv[]){
 				}
 			}
 	    } else{
+	    	//do a double scanning to better insure robustness
+	    	repair_disk(partitions[repair_partition_num - 1].start);
 	    	repair_disk(partitions[repair_partition_num - 1].start);
 	    }
 	}
@@ -90,32 +99,34 @@ int main(int argc, char *argv[]){
 	return 0;
 }
 
+/*
+ * @disk_offset: the offset of the partition
+ * check for errors for an ext2 file system and repair inconsistency
+ */
 void repair_disk(int disk_offset){
+
+	//read in the super_block information
 	read_sectors(disk_offset + SUPER_BLOCK_OFFSET, SUPER_BLOCK_SIZE, &super_block);
-		
 	int addr;
 	struct ext2_inode* root_node = get_inode(EXT2_ROOT_INO, disk_offset, &addr);	
 
 	//read the root directory
-	struct ext2_dir_entry_2 directories[256];
-	int addrs[256];
+	struct ext2_dir_entry_2 directories[MAX_DIRS];
+	int addrs[MAX_DIRS];
 	read_entries(disk_offset, root_node, directories, addrs);
-
-	// int i;
-	// for(i = 0; directories[i].file_type != 0; i++){
-	//  	printf("inode: %d, length %d, name: %s\n", directories[i].inode, directories[i].rec_len,
-	//  		directories[i].name);
-	// }
 
 	//an array that counts the actual i link for each i_node
 	int *count = (int*) calloc(super_block.s_inodes_count, sizeof(int));
+	if(count == NULL) exit(1);
+
 	//traverse all directories and files with a DFS approach
 	dfs_directory(disk_offset, count, directories[0], directories[0]);
-
 	//put the unreferenced inodes into the lost+found directory
 	lost_found(disk_offset, count);
 	//repair the i_links count
 	repair_ilink_count(disk_offset, count);
+	correct_bit_map(disk_offset);
+
 
 }
 
@@ -170,6 +181,7 @@ void get_partitions(partition *partitions, char *disk_name){
 		}
 	}
 
+	//caculate the offset for the next partition and reads in the info
 	int next_ebr = ebr_start, next_offset = 0;
 	while(1){
 		read_sectors(next_ebr, 1, buf);

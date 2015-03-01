@@ -12,5 +12,6 @@ void dfs_directory(int offset, int *count, struct ext2_dir_entry_2 dir, struct e
 void repair_ilink_count(int offset, int* count);
 void lost_found(int offset, int* count);
 void i_mode_2_file_type(__u8 *type, int i_mode);
+void correct_bit_map(int offset);
 
 #endif

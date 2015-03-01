@@ -65,12 +65,6 @@ void read_sectors (int64_t start_sector, unsigned int num_sectors, void *into)
     int64_t sector_offset;
     ssize_t bytes_to_read;
 
-    // if (num_sectors == 1) {
-    //     printf("Reading sector %"PRId64"\n", start_sector);
-    // } else {
-    //     printf("Reading sectors %"PRId64"--%"PRId64"\n",
-    //            start_sector, start_sector + (num_sectors - 1));
-    // }
 
     sector_offset = start_sector * sector_size_bytes;
 
